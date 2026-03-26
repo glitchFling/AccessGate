@@ -7,26 +7,8 @@
   // KV for identities, sessions, blocklist, admin tokens, etc.
     "kv_namespaces": [
     {
-      "binding": "KV",
+      "binding": "ACCESSGATE_KV",
       "id": "615747a0d99c46ababd0bfb76d89d8c5",
-    }
-  ],
-
-  // Optional: Durable Object for rate limiting or audit logs
-  "durable_objects": {
-    "bindings": [
-      {
-        "name": "ACCESSGATE_DO",
-        "class_name": "AccessGateDO"
-      }
-    ]
-  },
-
-  // Optional: R2 if you want persistent logs or large metadata
-  "r2_buckets": [
-    {
-      "binding": "ACCESSGATE_R2",
-      "bucket_name": "accessgate-r2"
     }
   ],
 
