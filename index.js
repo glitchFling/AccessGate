@@ -6,11 +6,10 @@ export default {
     const path = url.pathname;
     const method = request.method;
 
-    // Attach env/KV if you ever want to use AccessGate inside the Worker
     AccessGate.env = env;
     AccessGate.kv = env.ACCESSGATE_KV;
 
-    // CORS preflight
+    // CORS
     if (method === "OPTIONS") {
       return new Response(null, {
         headers: {
@@ -21,7 +20,7 @@ export default {
       });
     }
 
-    // --- DEBUG: prove AccessGate is imported ---
+    // Debug route
     if (path === "/debug/accessgate") {
       return json({
         imported: typeof AccessGate === "object",
@@ -29,49 +28,51 @@ export default {
       });
     }
 
-    // --- ROUTES ---
-
-    // Issue a session ID (short‑lived)
-    if (path === "/access/session" && method === "POST") {
-      return handleSession(env);
+    // -----------------------------
+    // Unified AccessGate command router
+    // -----------------------------
+    if (path.startsWith("/access/") && method === "POST") {
+      const command = path.replace("/access/", "").trim();
+      return routeAccessGateCommand(command, request, env);
     }
 
-    // Issue a permanent ID (or reuse existing)
-    if (path === "/access/issue" && method === "POST") {
-      return handleIssue(request, env);
-    }
-
-    // Check if ID is blocked
-    if (path === "/access/check" && method === "POST") {
-      return handleBlockCheck(request, env);
-    }
-
-    // Block a user
-    if (path === "/access/block" && method === "POST") {
-      return handleBlockUser(request, env);
-    }
-
-    // Unblock a user
-    if (path === "/access/unblock" && method === "POST") {
-      return handleUnblockUser(request, env);
-    }
-
-    // Admin check
-    if (path === "/access/is-admin" && method === "POST") {
-      return handleAdminCheck(request, env);
-    }
-
-    // Default
     return new Response("AccessGate Worker Online", {
       headers: { "content-type": "text/plain" }
     });
   }
 };
 
-// -------------------------
-// HANDLERS
-// -------------------------
+// -----------------------------
+// COMMAND ROUTER
+// -----------------------------
+async function routeAccessGateCommand(command, request, env) {
+  switch (command) {
+    case "session":
+      return handleSession(env);
 
+    case "issue":
+      return handleIssue(request, env);
+
+    case "check":
+      return handleBlockCheck(request, env);
+
+    case "block":
+      return handleBlockUser(request, env);
+
+    case "unblock":
+      return handleUnblockUser(request, env);
+
+    case "is-admin":
+      return handleAdminCheck(request, env);
+
+    default:
+      return json({ error: "Unknown AccessGate command" }, 404);
+  }
+}
+
+// -----------------------------
+// HANDLERS
+// -----------------------------
 async function handleSession(env) {
   const id = crypto.randomUUID();
   await env.ACCESSGATE_KV.put(`session:${id}`, "1", { expirationTtl: 86400 });
@@ -128,10 +129,9 @@ async function handleAdminCheck(request, env) {
   return json({ isAdmin: !!exists });
 }
 
-// -------------------------
+// -----------------------------
 // HELPERS
-// -------------------------
-
+// -----------------------------
 function json(obj, status = 200) {
   return new Response(JSON.stringify(obj), {
     status,
