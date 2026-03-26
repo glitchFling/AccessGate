@@ -28,9 +28,7 @@ export default {
       });
     }
 
-    // -----------------------------
     // Unified AccessGate command router
-    // -----------------------------
     if (path.startsWith("/access/") && method === "POST") {
       const command = path.replace("/access/", "").trim();
       return routeAccessGateCommand(command, request, env);
