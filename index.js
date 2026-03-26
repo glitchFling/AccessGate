@@ -4,13 +4,14 @@ export default {
   async fetch(request, env, ctx) {
     const url = new URL(request.url);
     const path = url.pathname;
+    const method = request.method;
 
-    // Attach KV + env to AccessGate
+    // Attach env + KV to AccessGate
     AccessGate.env = env;
     AccessGate.kv = env.ACCESSGATE_KV;
 
-    // Basic CORS
-    if (request.method === "OPTIONS") {
+    // --- CORS ---
+    if (method === "OPTIONS") {
       return new Response(null, {
         headers: {
           "Access-Control-Allow-Origin": "*",
@@ -20,62 +21,105 @@ export default {
       });
     }
 
-    // ---- SESSION ----
-    if (path === "/access/session") {
-      const id = crypto.randomUUID();
-      await env.ACCESSGATE_KV.put(`session:${id}`, "1", { expirationTtl: 86400 });
-      return json({ id });
+    // --- ROUTING ---
+    if (path === "/access/session" && method === "POST") {
+      return handleSession(env);
     }
 
-    // ---- ISSUE ID ----
-    if (path === "/access/issue") {
-      const body = await safeJson(request);
-      const existing = body?.existingId;
-      const id = existing || crypto.randomUUID();
-      await env.ACCESSGATE_KV.put(`id:${id}`, "1");
-      return json({ id });
+    if (path === "/access/issue" && method === "POST") {
+      return handleIssue(request, env);
     }
 
-    // ---- BLOCK CHECK ----
-    if (path === "/access/check") {
-      const body = await safeJson(request);
-      const id = body?.id;
-      const blocked = await env.ACCESSGATE_KV.get(`blocked:${id}`);
-      return json({ blocked: !!blocked });
+    if (path === "/access/check" && method === "POST") {
+      return handleBlockCheck(request, env);
     }
 
-    // ---- BLOCK USER ----
-    if (path === "/access/block") {
-      const body = await safeJson(request);
-      const id = body?.id;
-      await env.ACCESSGATE_KV.put(`blocked:${id}`, "1");
-      return json({ ok: true });
+    if (path === "/access/block" && method === "POST") {
+      return handleBlockUser(request, env);
     }
 
-    // ---- UNBLOCK USER ----
-    if (path === "/access/unblock") {
-      const body = await safeJson(request);
-      const id = body?.id;
-      await env.ACCESSGATE_KV.delete(`blocked:${id}`);
-      return json({ ok: true });
+    if (path === "/access/unblock" && method === "POST") {
+      return handleUnblockUser(request, env);
     }
 
-    // ---- ADMIN CHECK ----
-    if (path === "/access/is-admin") {
-      const token = request.headers.get("x-access-gate-token") || "";
-      const isAdmin = await env.ACCESSGATE_KV.get(`admin:${token}`);
-      return json({ isAdmin: !!isAdmin });
+    if (path === "/access/is-admin" && method === "POST") {
+      return handleAdminCheck(request, env);
     }
 
+    // Default response
     return new Response("AccessGate Worker Online", {
       headers: { "content-type": "text/plain" }
     });
   }
 };
 
-// --- helpers ---
-function json(obj) {
+// -------------------------
+// HANDLERS
+// -------------------------
+
+async function handleSession(env) {
+  const id = crypto.randomUUID();
+  await env.ACCESSGATE_KV.put(`session:${id}`, "1", { expirationTtl: 86400 });
+  return json({ id });
+}
+
+async function handleIssue(request, env) {
+  const body = await safeJson(request);
+  const existing = body?.existingId;
+  const id = existing || crypto.randomUUID();
+  await env.ACCESSGATE_KV.put(`id:${id}`, "1");
+  return json({ id });
+}
+
+async function handleBlockCheck(request, env) {
+  const body = await safeJson(request);
+  const id = body?.id;
+  if (!id) return json({ blocked: false });
+
+  const blocked = await env.ACCESSGATE_KV.get(`blocked:${id}`);
+  return json({ blocked: !!blocked });
+}
+
+async function handleBlockUser(request, env) {
+  const body = await safeJson(request);
+  const id = body?.id;
+  const reason = body?.reason || "manual";
+
+  if (!id) return json({ error: "Missing id" }, 400);
+
+  await env.ACCESSGATE_KV.put(`blocked:${id}`, reason);
+  return json({ ok: true });
+}
+
+async function handleUnblockUser(request, env) {
+  const body = await safeJson(request);
+  const id = body?.id;
+
+  if (!id) return json({ error: "Missing id" }, 400);
+
+  await env.ACCESSGATE_KV.delete(`blocked:${id}`);
+  return json({ ok: true });
+}
+
+async function handleAdminCheck(request, env) {
+  const token =
+    request.headers.get("x-access-gate-token") ||
+    request.headers.get("ACCESS_GATE_ADMIN_TOKEN") ||
+    "";
+
+  if (!token) return json({ isAdmin: false });
+
+  const exists = await env.ACCESSGATE_KV.get(`admin:${token}`);
+  return json({ isAdmin: !!exists });
+}
+
+// -------------------------
+// HELPERS
+// -------------------------
+
+function json(obj, status = 200) {
   return new Response(JSON.stringify(obj), {
+    status,
     headers: {
       "content-type": "application/json",
       "Access-Control-Allow-Origin": "*"
@@ -84,6 +128,9 @@ function json(obj) {
 }
 
 async function safeJson(req) {
-  try { return await req.json(); }
-  catch { return {}; }
+  try {
+    return await req.json();
+  } catch {
+    return {};
+  }
 }
