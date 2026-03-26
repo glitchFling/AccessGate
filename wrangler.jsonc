@@ -1,6 +1,6 @@
 {
   "name": "accessgate",
-  "main": "AccessGate.js",
+  "main": "index.js",
   "compatibility_date": "2024-03-25",
   "type": "module",
 
