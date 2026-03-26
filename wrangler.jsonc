@@ -10,7 +10,7 @@
       "binding": "KV",
       "id": "615747a0d99c46ababd0bfb76d89d8c5",
     }
-  ]
+  ],
 
   // Optional: Durable Object for rate limiting or audit logs
   "durable_objects": {
