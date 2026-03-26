@@ -6,11 +6,11 @@ export default {
     const path = url.pathname;
     const method = request.method;
 
-    // Attach env + KV to AccessGate
+    // Attach env/KV if you ever want to use AccessGate inside the Worker
     AccessGate.env = env;
     AccessGate.kv = env.ACCESSGATE_KV;
 
-    // --- CORS ---
+    // CORS preflight
     if (method === "OPTIONS") {
       return new Response(null, {
         headers: {
@@ -21,32 +21,47 @@ export default {
       });
     }
 
-    // --- ROUTING ---
+    // --- DEBUG: prove AccessGate is imported ---
+    if (path === "/debug/accessgate") {
+      return json({
+        imported: typeof AccessGate === "object",
+        keys: Object.keys(AccessGate || {})
+      });
+    }
+
+    // --- ROUTES ---
+
+    // Issue a session ID (short‑lived)
     if (path === "/access/session" && method === "POST") {
       return handleSession(env);
     }
 
+    // Issue a permanent ID (or reuse existing)
     if (path === "/access/issue" && method === "POST") {
       return handleIssue(request, env);
     }
 
+    // Check if ID is blocked
     if (path === "/access/check" && method === "POST") {
       return handleBlockCheck(request, env);
     }
 
+    // Block a user
     if (path === "/access/block" && method === "POST") {
       return handleBlockUser(request, env);
     }
 
+    // Unblock a user
     if (path === "/access/unblock" && method === "POST") {
       return handleUnblockUser(request, env);
     }
 
+    // Admin check
     if (path === "/access/is-admin" && method === "POST") {
       return handleAdminCheck(request, env);
     }
 
-    // Default response
+    // Default
     return new Response("AccessGate Worker Online", {
       headers: { "content-type": "text/plain" }
     });
@@ -73,7 +88,7 @@ async function handleIssue(request, env) {
 
 async function handleBlockCheck(request, env) {
   const body = await safeJson(request);
-  const id = body?.id;
+  const id = body?.id || body?.uuid;
   if (!id) return json({ blocked: false });
 
   const blocked = await env.ACCESSGATE_KV.get(`blocked:${id}`);
@@ -82,7 +97,7 @@ async function handleBlockCheck(request, env) {
 
 async function handleBlockUser(request, env) {
   const body = await safeJson(request);
-  const id = body?.id;
+  const id = body?.id || body?.uuid;
   const reason = body?.reason || "manual";
 
   if (!id) return json({ error: "Missing id" }, 400);
@@ -93,7 +108,7 @@ async function handleBlockUser(request, env) {
 
 async function handleUnblockUser(request, env) {
   const body = await safeJson(request);
-  const id = body?.id;
+  const id = body?.id || body?.uuid;
 
   if (!id) return json({ error: "Missing id" }, 400);
 
