@@ -30,7 +30,7 @@ export default {
 
       // 4. Access the 100,000-bit key from KV (using ACESSGATE_KV)
       // Ensure 'ACESSGATE_KV' is the exact name of your binding
-      const uniMasterKey = await env.ACESSGATE_KV.get("uni-master-key");
+      const uniMasterKey = await env.ACCESSGATE_KV.get("uni-master-key");
       
       if (!uniMasterKey) {
         throw new Error("Master Key not found in KV");
