@@ -12,26 +12,23 @@ export default {
       const body = await request.json();
       const { userId, userKey } = body;
 
-      // Debug: Check if KV is actually connected
-      if (!env.ACESSGATE_KV) {
-        throw new Error("KV Binding 'ACESSGATE_KV' is missing in Dashboard");
-      }
-
-      const masterKey = await env.ACESSGATE_KV.get("uni-master-key");
+      // FIX: Added the missing "C" to ACCESSGATE_KV
+      const masterKey = await env.ACCESSGATE_KV.get("uni-master-key");
       
       if (!masterKey) {
-        throw new Error("The key 'uni-master-key' does not exist in your KV namespace");
+        return new Response(JSON.stringify({ error: "KV Key 'uni-master-key' is missing" }), { 
+          status: 400, headers: corsHeaders 
+        });
       }
 
-      // 401 Check
+      // 401 Unauthorized check
       if (userKey !== masterKey) {
-        return new Response(JSON.stringify({ error: "Unauthorized: Key Mismatch" }), {
+        return new Response(JSON.stringify({ error: "Unauthorized: 100k-bit key mismatch" }), {
           status: 401,
           headers: { ...corsHeaders, "Content-Type": "application/json" }
         });
       }
 
-      // If they match, generate the signature
       const signature = await signUser(masterKey, userId);
 
       return new Response(JSON.stringify({ ok: true, signature }), {
@@ -40,10 +37,8 @@ export default {
       });
 
     } catch (err) {
-      // THIS WILL TELL YOU THE REAL PROBLEM IN THE CONSOLE
       return new Response(JSON.stringify({ error: err.message }), { 
-        status: 400, 
-        headers: corsHeaders 
+        status: 400, headers: corsHeaders 
       });
     }
   }
