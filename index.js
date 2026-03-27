@@ -1,58 +1,73 @@
 export default {
   async fetch(request, env, ctx) {
-    if (request.method === "POST") {
-      let body;
-      try {
-        body = await request.json();
-      } catch {
-        return json({ error: "Invalid JSON" }, 400);
-      }
-
-      const userId = body.userId || "anonymous";
-      const story = body.story || { msg: "no story" };
-
-      const uni = await getUniMaster(env);
-      const userKey = await deriveUserKey(uni, userId);
-      const signature = await signStory(uni, { userId, story });
-
-      return json({
-        ok: true,
-        userId,
-        // you can remove this if you don't want to expose per-user keys
-        userKey,
-        signature
+    // 1. Only allow POST requests for the secure gate
+    if (request.method !== "POST") {
+      return new Response("AccessGate Online - System Ready", {
+        headers: { "content-type": "text/plain" }
       });
     }
 
-    return new Response("AccessGate Root – UniMaster online", {
-      headers: { "content-type": "text/plain" }
-    });
+    try {
+      // 2. Parse the incoming JSON body
+      const body = await request.json();
+      const { userId, story } = body;
+
+      if (!userId) {
+        return json({ error: "Missing userId" }, 400);
+      }
+
+      // 3. Fetch the 100,000-bit Master Key (Server-Side only)
+      // This key is stored in KV and never leaves the Cloudflare Edge
+      const uniMasterKey = await env.GLITCHPROTECT_KV.get("uni-master-key");
+      if (!uniMasterKey) {
+        throw new Error("Master Key Configuration Missing");
+      }
+
+      // 4. Cryptographic Operations (Server-Side)
+      // Derive a unique key for this user and sign the story
+      const userKey = await deriveUserKey(uniMasterKey, userId);
+      const signature = await signStory(uniMasterKey, { userId, story: story || "no story" });
+
+      // 5. Return the result (Keep the Master Key secret!)
+      return json({
+        ok: true,
+        userId,
+        signature,
+        verified: true
+      });
+
+    } catch (err) {
+      return json({ error: "Invalid Request", details: err.message }, 400);
+    }
   }
 };
 
+/** 
+ * Helper: Standard JSON Response 
+ */
 function json(obj, status = 200) {
   return new Response(JSON.stringify(obj), {
     status,
-    headers: { "content-type": "application/json" }
+    headers: { "Content-Type": "application/json" }
   });
 }
 
-async function getUniMaster(env) {
-  const uni = await env.GLITCHPROTECT_KV.get("uni-master-key", "text");
-  if (!uni) throw new Error("UniMaster key missing");
-  return uni;
-}
-
-async function deriveUserKey(uniMasterKey, userId) {
-  const data = new TextEncoder().encode(uniMasterKey + "::user::" + userId);
-  const hash = await crypto.subtle.digest("SHA-256", data);
-  const bytes = new Uint8Array(hash);
-  return bytesToHex(bytes);
-}
-
-async function signStory(uniMasterKey, payload) {
+/** 
+ * Server-Side: Derive a User-Specific Key using SHA-256
+ */
+async function deriveUserKey(masterKey, userId) {
   const enc = new TextEncoder();
-  const keyData = enc.encode(uniMasterKey);
+  const data = enc.encode(`${masterKey}:${userId}`);
+  const hash = await crypto.subtle.digest("SHA-256", data);
+  return bytesToHex(new Uint8Array(hash));
+}
+
+/** 
+ * Server-Side: Sign the payload using HMAC-SHA256
+ */
+async function signStory(masterKey, payload) {
+  const enc = new TextEncoder();
+  const keyData = enc.encode(masterKey);
 
   const cryptoKey = await crypto.subtle.importKey(
     "raw",
@@ -64,10 +79,14 @@ async function signStory(uniMasterKey, payload) {
 
   const data = enc.encode(JSON.stringify(payload));
   const sigBuf = await crypto.subtle.sign("HMAC", cryptoKey, data);
-  const bytes = new Uint8Array(sigBuf);
-  return bytesToHex(bytes);
+  return bytesToHex(new Uint8Array(sigBuf));
 }
 
+/** 
+ * Helper: Convert binary buffer to Hex string
+ */
 function bytesToHex(bytes) {
-  return [...bytes].map(b => b.toString(16).padStart(2, "0")).join("");
+  return Array.from(bytes)
+    .map(b => b.toString(16).padStart(2, "0"))
+    .join("");
 }
