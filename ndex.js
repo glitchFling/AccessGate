@@ -81,3 +81,9 @@ function bytesToHex(bytes) {
     .map(b => b.toString(16).padStart(2, "0"))
     .join("");
 }
+
+// Precomputed SHA-512 digest of UniMaster key (must be stored manually in KV)
+      const masterDigest = await env.ACCESSGATE_KV.get("uni-master-key-hash");
+      if (!masterDigest) {
+        return json({ authorized: false, error: "KV key 'uni-master-key-hash' missing" }, 500, corsHeaders);
+      }
