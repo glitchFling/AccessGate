@@ -10,20 +10,28 @@ export default {
 
     try {
       const body = await request.json();
-      const { userId, userKey } = body; // User must provide their 100k-bit key
+      const { userId, userKey } = body;
 
-      // 1. Get the real master key from KV
+      // Debug: Check if KV is actually connected
+      if (!env.ACESSGATE_KV) {
+        throw new Error("KV Binding 'ACESSGATE_KV' is missing in Dashboard");
+      }
+
       const masterKey = await env.ACESSGATE_KV.get("uni-master-key");
+      
+      if (!masterKey) {
+        throw new Error("The key 'uni-master-key' does not exist in your KV namespace");
+      }
 
-      // 2. UNAUTHORIZED CHECK: Compare user input to the master key
-      if (!userKey || userKey !== masterKey) {
+      // 401 Check
+      if (userKey !== masterKey) {
         return new Response(JSON.stringify({ error: "Unauthorized: Key Mismatch" }), {
           status: 401,
           headers: { ...corsHeaders, "Content-Type": "application/json" }
         });
       }
 
-      // 3. If they match, proceed to sign
+      // If they match, generate the signature
       const signature = await signUser(masterKey, userId);
 
       return new Response(JSON.stringify({ ok: true, signature }), {
@@ -32,7 +40,8 @@ export default {
       });
 
     } catch (err) {
-      return new Response(JSON.stringify({ error: "Bad Request" }), { 
+      // THIS WILL TELL YOU THE REAL PROBLEM IN THE CONSOLE
+      return new Response(JSON.stringify({ error: err.message }), { 
         status: 400, 
         headers: corsHeaders 
       });
@@ -40,25 +49,9 @@ export default {
   }
 };
 
-// ... (Keep your signUser and bytesToHex functions below) ...
-
-/**
- * Server-Side HMAC-SHA256 Signing
- */
-async function signUser(masterKey, userId) {
+async function signUser(key, data) {
   const enc = new TextEncoder();
-  const keyData = enc.encode(masterKey);
-
-  const cryptoKey = await crypto.subtle.importKey(
-    "raw",
-    keyData,
-    { name: "HMAC", hash: "SHA-256" },
-    false,
-    ["sign"]
-  );
-
-  const sigBuf = await crypto.subtle.sign("HMAC", cryptoKey, enc.encode(userId));
-  return Array.from(new Uint8Array(sigBuf))
-    .map(b => b.toString(16).padStart(2, "0"))
-    .join("");
+  const cKey = await crypto.subtle.importKey("raw", enc.encode(key), { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);
+  const sig = await crypto.subtle.sign("HMAC", cKey, enc.encode(data));
+  return Array.from(new Uint8Array(sig)).map(b => b.toString(16).padStart(2, "0")).join("");
 }
