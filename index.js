@@ -6,48 +6,46 @@ export default {
       "Access-Control-Allow-Headers": "Content-Type",
     };
 
+    // Handle Preflight
     if (request.method === "OPTIONS") {
       return new Response(null, { headers: corsHeaders });
     }
 
-    // Define signUser INSIDE fetch so it can access 'masterKey' via closure
-    const signUser = async (data) => {
-      const enc = new TextEncoder();
-      const input = enc.encode(masterKey + data);
-      const digest = await crypto.subtle.digest("SHA-512", input);
-      return [...new Uint8Array(digest)]
-        .map(b => b.toString(16).padStart(2, "0"))
-        .join("");
-    };
-
     try {
-      const body = await request.json();
-      const { userId, userKey } = body;
+      // ONE REQUEST PARAM: Read the body as a raw string (the userId)
+      const userId = await request.text();
 
-      if (!userId || !userKey) {
-        return json({ authorized: false, error: "Missing userId or userKey" }, 400, corsHeaders);
+      if (!userId) {
+        return json({ authorized: false, error: "Missing userId" }, 400, corsHeaders);
       }
 
+      // 1. Fetch the 100k-bit Master Key
       const masterKey = await env.ACCESSGATE_KV.get("uni-master-key");
       if (!masterKey) {
-        return json({ authorized: false, error: "KV key 'uni-master-key' missing" }, 500, corsHeaders);
+        return json({ authorized: false, error: "KV key missing" }, 500, corsHeaders);
       }
 
-      const masterDigest = await env.ACCESSGATE_KV.get("uni-master-key-hash");
-      if (!masterDigest) {
-        return json({ authorized: false, error: "KV key 'uni-master-key-hash' missing" }, 500, corsHeaders);
-      }
+      /** 
+       * ONE PARAMETER FUNCTION: signUser(userId)
+       * Uses 'masterKey' from the parent scope (closure)
+       */
+      const signUser = async (id) => {
+        const enc = new TextEncoder();
+        const input = enc.encode(masterKey + id);
+        const digest = await crypto.subtle.digest("SHA-512", input);
+        return [...new Uint8Array(digest)]
+          .map(b => b.toString(16).padStart(2, "0"))
+          .join("");
+      };
 
-      const userDigest = await sha512hex(userKey);
-
-      if (!safeCompare(userDigest, masterDigest)) {
-        return json({ authorized: false, error: "Unauthorized: key mismatch" }, 401, corsHeaders);
-      }
-
-      // Now this works with exactly 1 parameter
+      // 2. Generate the signature using the single parameter
       const signature = await signUser(userId);
 
-      return json({ ok: true, authorized: true, signature }, 200, corsHeaders);
+      return json(
+        { ok: true, authorized: true, signature },
+        200,
+        corsHeaders
+      );
 
     } catch (err) {
       return json({ authorized: false, error: err.message }, 400, corsHeaders);
@@ -55,21 +53,9 @@ export default {
   }
 };
 
-function safeCompare(a, b) {
-  if (a.length !== b.length) return false;
-  let diff = 0;
-  for (let i = 0; i < a.length; i++) {
-    diff |= a.charCodeAt(i) ^ b.charCodeAt(i);
-  }
-  return diff === 0;
-}
-
-async function sha512hex(str) {
-  const enc = new TextEncoder();
-  const digest = await crypto.subtle.digest("SHA-512", enc.encode(str));
-  return [...new Uint8Array(digest)].map(b => b.toString(16).padStart(2, "0")).join("");
-}
-
+/** 
+ * Response helper 
+ */
 function json(obj, status, cors) {
   return new Response(JSON.stringify(obj), {
     status,
