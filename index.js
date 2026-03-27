@@ -6,66 +6,37 @@ export default {
       "Access-Control-Allow-Headers": "Content-Type",
     };
 
-    // Handle Preflight
-    if (request.method === "OPTIONS") {
-      return new Response(null, { headers: corsHeaders });
-    }
+    if (request.method === "OPTIONS") return new Response(null, { headers: corsHeaders });
 
     try {
       const body = await request.json();
       const { userId, userKey } = body;
 
-      // Validate input presence
       if (!userId || !userKey) {
-        return json({ authorized: false, error: "Missing userId or userKey" }, 400, corsHeaders);
+        return json({ authorized: false, error: "Missing fields" }, 400, corsHeaders);
       }
 
-      // 1. Fetch the 100k-bit Master Key
-      const masterKey = await env.ACCESSGATE_KV.get("uni-master-key");
-      if (!masterKey) {
-        return json({ authorized: false, error: "KV key 'uni-master-key' missing" }, 500, corsHeaders);
-      }
-
-      // 2. Fetch the precomputed SHA-512 hash of that key
-      const masterDigest = await env.ACCESSGATE_KV.get("uni-master-key-hash");
-      if (!masterDigest) {
-        return json({ authorized: false, error: "KV key 'uni-master-key-hash' missing" }, 500, corsHeaders);
-      }
-
-      // 3. Hash the user's incoming key (Stay under 10ms CPU limit)
+      // 1. Hash the user's incoming key to find the KV "address"
       const userDigest = await sha512hex(userKey);
 
-      // 4. Constant-time compare the 128-character hashes
-      if (!safeCompare(userDigest, masterDigest)) {
-        return json({ authorized: false, error: "Unauthorized: key mismatch" }, 401, corsHeaders);
+      // 2. Look for a KV entry where the NAME is that hash string
+      // If the key is wrong, the lookup address is wrong, and masterKey is null.
+      const masterKey = await env.ACCESSGATE_KV.get(userDigest);
+
+      if (!masterKey) {
+        return json({ authorized: false, error: "Unauthorized" }, 401, corsHeaders);
       }
 
-      // 5. Generate the final high-entropy Admin signature
+      // 3. If found, the user provided the correct 100k-bit key. Sign the ID.
       const signature = await signUser(masterKey, userId);
 
-      return json(
-        { ok: true, authorized: true, signature },
-        200,
-        corsHeaders
-      );
+      return json({ ok: true, authorized: true, signature }, 200, corsHeaders);
 
     } catch (err) {
       return json({ authorized: false, error: err.message }, 400, corsHeaders);
     }
   }
 };
-
-/** 
- * Constant-time comparison to prevent timing attacks 
- */
-function safeCompare(a, b) {
-  if (a.length !== b.length) return false;
-  let diff = 0;
-  for (let i = 0; i < a.length; i++) {
-    diff |= a.charCodeAt(i) ^ b.charCodeAt(i);
-  }
-  return diff === 0;
-}
 
 /** 
  * Standard SHA-512 Hex generator 
@@ -83,7 +54,6 @@ async function sha512hex(str) {
  */
 async function signUser(key, data) {
   const enc = new TextEncoder();
-  // We use key + data to ensure the signature is bound to the specific user
   const input = enc.encode(key + data);
   const digest = await crypto.subtle.digest("SHA-512", input);
   return [...new Uint8Array(digest)]
